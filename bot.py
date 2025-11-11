@@ -6,14 +6,19 @@ import subprocess
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import json
+from flask import Flask
+from threading import Thread
 
 # ===========================
 # 🔹 توكن البوت (مضمّن في الكود)
 # ===========================
 BOT_TOKEN = "8461219655:AAF1jnw_IpKuu1tdXJSW9ubnjRe5pxlMoxo"
 
-# إنشاء كائن البوت
+# ===========================
+# 📦 إنشاء كائنات البوت والسيرفر
+# ===========================
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
 # ===========================
 # 📥 دالة تحميل معلومات الفيديو
@@ -115,9 +120,34 @@ def callback_handler(call):
     os.remove(file_path)
 
 # ===========================
-# 🟢 تشغيل البوت
+# 🟢 تشغيل البوت باستخدام Thread
+# ===========================
+
+def run_bot():
+    print("🤖 Tarzanbot is running...")
+    bot.infinity_polling()
+
+# ===========================
+# 🌐 إضافة endpoint لاستقبال Ping
+# ===========================
+
+@app.route('/')
+def home():
+    return "✅ السيرفر يعمل! Tarzanbot جاهز للـ Ping."
+
+# ===========================
+# 🏁 تشغيل Flask + البوت
 # ===========================
 
 if __name__ == "__main__":
-    print("🤖 Tarzanbot is running...")
-    bot.infinity_polling()
+    from waitress import serve  # أفضل لتشغيل الإنتاج على Render
+    import threading
+
+    # تشغيل البوت في Thread منفصل
+    t = threading.Thread(target=run_bot)
+    t.start()
+
+    # تشغيل Flask عبر Waitress على جميع العناوين
+    port = int(os.environ.get("PORT", 5000))
+    print(f"🌐 السيرفر يعمل على المنفذ {port}")
+    serve(app, host="0.0.0.0", port=port)
