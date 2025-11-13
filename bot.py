@@ -12,9 +12,9 @@ from threading import Thread
 import time
 
 # ===========================
-# 🔹 توكن البوت (يرجى إبقائه كما هو في القالب)
+# 🔹 توكن البوت
 # ===========================
-BOT_TOKEN = "8258339661:AAHSIeEzkDZ5xMEXdnwPfk9xGfchyBwAJ7Q"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8258339661:AAHSIeEzkDZ5xMEXdnwPfk9xGfchyBwAJ7Q")
 
 # ===========================
 # 📦 إنشاء كائنات البوت والسيرفر
@@ -23,276 +23,151 @@ bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 # ===========================
-# ⚙️ الثوابت والمسارات
+# ⚙️ إعدادات المسارات
 # ===========================
-# مسار حفظ الملفات المؤقتة
-DOWNLOAD_DIR = "downloads" 
-# التأكد من وجود المجلد
-if not os.path.exists(DOWNLOAD_DIR):
-    os.makedirs(DOWNLOAD_DIR)
+DOWNLOAD_DIR = "downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # ===========================
-# 📥 دالة جلب معلومات الوسائط (عامة لجميع المنصات)
+# 📥 جلب معلومات الوسائط باستخدام yt-dlp
 # ===========================
 def get_media_info(url: str) -> dict:
-    """
-    الحصول على معلومات الفيديو/الوسائط من أي مصدر يدعمه yt-dlp
-    """
-    # استخدام yt-dlp -j لـ JSON Output
-    command = ['yt-dlp', '-j', url]
-    
     try:
-        # تنفيذ الأمر والتقاط المخرجات
-        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=15)
-        info = json.loads(result.stdout)
-        return info
-    except subprocess.CalledProcessError as e:
-        print(f"❌ خطأ في yt-dlp: {e.stderr}")
-        return {"error": e.stderr}
-    except json.JSONDecodeError:
-        print("❌ فشل تحليل JSON من yt-dlp")
-        return {"error": "Failed to decode media info."}
+        result = subprocess.run(['yt-dlp', '-j', url], capture_output=True, text=True, check=True, timeout=20)
+        return json.loads(result.stdout)
     except subprocess.TimeoutExpired:
-        print("❌ انتهت مهلة جلب المعلومات.")
-        return {"error": "Timeout while fetching info."}
+        return {"error": "⏱️ انتهت المهلة أثناء تحليل الرابط."}
+    except subprocess.CalledProcessError as e:
+        return {"error": e.stderr or "❌ فشل تنفيذ yt-dlp"}
     except Exception as e:
-        print(f"❌ خطأ غير متوقع في جلب المعلومات: {e}")
         return {"error": str(e)}
 
 # ===========================
-# 🚀 دالة تحميل الوسائط (عامة لجميع المنصات)
+# 🚀 تحميل الوسائط (فيديو أو صوت)
 # ===========================
 def download_media(url: str, format_type: str, file_name: str) -> str:
-    """
-    تحميل الوسائط (فيديو أو صوت) وتحديد مسار الإخراج.
-    """
     output_path = os.path.join(DOWNLOAD_DIR, f"{file_name}.%(ext)s")
-    
-    if format_type == "video":
-        # أفضل فيديو بجودة عالية متوفرة (يفضل mp4)
-        fmt = "bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best"
-    elif format_type == "audio":
-        # أفضل صوت فقط وتحويله إلى mp3
+
+    if format_type == "audio":
         fmt = "bestaudio[ext=m4a]/bestaudio"
-        command = [
-            'yt-dlp', 
-            '-f', fmt, 
-            '-x', # استخراج الصوت
-            '--audio-format', 'mp3', # تحويل للصيغة المطلوبة
-            '--add-metadata',
-            '--restrict-filenames', 
-            '-o', output_path, 
-            '--no-warnings', 
-            url
-        ]
-        
-        # لتنزيل الفيديو (مع أو بدون صوت حسب الطلب)
-    else: # video or default
-        command = [
-            'yt-dlp', 
-            '-f', fmt, 
-            '--merge-output-format', 'mp4',
-            '--add-metadata',
-            '--restrict-filenames', 
-            '-o', output_path, 
-            '--no-warnings', 
-            url
-        ]
-        
+        cmd = ['yt-dlp', '-f', fmt, '-x', '--audio-format', 'mp3', '-o', output_path, url]
+    else:
+        fmt = "bestvideo[ext=mp4]+bestaudio/best"
+        cmd = ['yt-dlp', '-f', fmt, '--merge-output-format', 'mp4', '-o', output_path, url]
+
     try:
-        # تنفيذ الأمر
-        subprocess.run(command, check=True, timeout=600) # مهلة 10 دقائق
-        
-        # البحث عن الملف الذي تم تنزيله (yt-dlp يضيف الامتداد)
+        subprocess.run(cmd, check=True, timeout=600)
         for f in os.listdir(DOWNLOAD_DIR):
             if f.startswith(file_name):
                 return os.path.join(DOWNLOAD_DIR, f)
-        
-        return "" # فشل في إيجاد الملف بعد التنزيل
-        
-    except subprocess.CalledProcessError as e:
-        print(f"❌ خطأ في عملية التحميل: {e.stderr}")
-        return ""
     except subprocess.TimeoutExpired:
-        print("❌ انتهت مهلة التحميل.")
-        return ""
+        print("⏰ انتهت مهلة التحميل.")
     except Exception as e:
-        print(f"❌ خطأ غير متوقع أثناء التحميل: {e}")
-        return ""
+        print(f"❌ خطأ أثناء التحميل: {e}")
+    return ""
 
 # ===========================
 # ⚡ أوامر البوت
 # ===========================
-
 @bot.message_handler(commands=['start'])
 def start_handler(msg):
-    # رسالة ترحيبية فخمة
-    welcome_message = (
-        "💎 **أهلاً بك في بوت التحميل السريع الشامل!** 🚀\n"
-        "أنا هنا لتحميل المحتوى من **يوتيوب، إنستغرام، تيك توك، وفيسبوك** وأغلب منصات التواصل الاجتماعي الأخرى.\n\n"
-        "✨ **كيف يعمل البوت؟**\n"
-        "1. **أرسل رابط** أي فيديو أو وسائط مدعومة.\n"
-        "2. سأجلب المعلومات وأعرض لك **خيارات التحميل (فيديو 📹 أو صوت 🎵)**.\n"
-        "3. اضغط على خيارك المفضل، وستحصل على الملف بأعلى جودة ممكنة دون علامات مائية.\n\n"
-        "✅ **الآن، أرسل رابطك الأول لتبدأ المتعة!**"
+    text = (
+        "👋 **مرحبًا بك في بوت التحميل الفائق!**\n"
+        "📥 أرسل أي رابط من Instagram أو YouTube أو TikTok أو Facebook.\n"
+        "وسأعطيك خيارات تحميل الفيديو أو الصوت مباشرة. 🚀"
     )
-    bot.reply_to(msg, welcome_message, parse_mode="Markdown")
+    bot.reply_to(msg, text, parse_mode="Markdown")
 
-@bot.message_handler(func=lambda msg: True)
-def handle_message(msg):
+@bot.message_handler(func=lambda m: True)
+def link_handler(msg):
     url = msg.text.strip()
-    
-    # تحقق بسيط من أن النص هو رابط صالح (قد يحتوي على بروتوكول http/https)
-    if not re.match(r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+', url):
-        bot.reply_to(msg, "⚠️ **تنبيه:** يرجى إرسال **رابط صالح** لوسائط من يوتيوب، إنستغرام، تيك توك، أو غيرها. 🔗")
-        return
+    if not re.match(r'https?://', url):
+        return bot.reply_to(msg, "⚠️ أرسل رابطًا صحيحًا يبدأ بـ http أو https")
 
-    processing_msg = bot.reply_to(msg, "⏳ **جاري تحليل الرابط... يرجى الانتظار للحظات.** 🕵️")
-    
+    wait_msg = bot.reply_to(msg, "🔎 **جارٍ تحليل الرابط...**", parse_mode="Markdown")
     info = get_media_info(url)
-    
-    if "error" in info or not info:
-        error_msg = info.get("error", "حدث خطأ غير معروف في جلب معلومات الوسائط.")
-        bot.edit_message_text(f"❌ **فشل جلب معلومات الوسائط:**\nقد يكون الرابط غير مدعوم، خاص، أو يحتوي على خطأ. ({error_msg})", 
-                              msg.chat.id, processing_msg.message_id, parse_mode="Markdown")
-        return
-    
-    # الحصول على معلومات أساسية
-    title = info.get('title', 'لا يتوفر عنوان')
-    extractor = info.get('extractor', 'مصدر غير محدد').replace(":", " ").capitalize()
-    duration = info.get('duration')
-    duration_str = f"{int(duration // 60)}:{int(duration % 60):02d}" if duration else "غير متوفر"
 
-    # إعداد رسالة المعلومات الفخمة
-    caption = (
-        f"🌟 **تم تحليل الرابط بنجاح!** 🌟\n\n"
-        f"🔗 **المنصة:** {extractor}\n"
-        f"🏷️ **العنوان:** {title}\n"
-        f"⏱️ **المدة:** {duration_str}\n"
-        f"👤 **الناشر:** {info.get('uploader', 'غير متوفر')}\n\n"
-        f"👇 **اختر جودة ونوع التحميل:**"
-    )
-
-    # إنشاء أزرار التحميل
-    markup = InlineKeyboardMarkup()
-    
-    # استخدام العنوان كجزء من اسم الملف لجعله فريدًا
-    file_id_segment = str(hash(url) % 100000) 
-    
-    # زر تحميل الفيديو
-    video_btn_text = "📹 تحميل فيديو (أعلى جودة)"
-    markup.add(
-        InlineKeyboardButton(video_btn_text, callback_data=f"video|{file_id_segment}|{url}")
-    )
-    
-    # زر تحميل الصوت فقط (إذا كانت المدة معقولة)
-    if duration is None or duration < 1000: # تجنب محاولة تنزيل صوت لساعات من البث المباشر
-        audio_btn_text = "🎵 تحميل صوت (MP3)"
-        markup.add(
-            InlineKeyboardButton(audio_btn_text, callback_data=f"audio|{file_id_segment}|{url}")
+    if "error" in info:
+        return bot.edit_message_text(
+            f"❌ **فشل جلب المعلومات:** {info['error']}",
+            msg.chat.id, wait_msg.message_id, parse_mode="Markdown"
         )
 
-    # إرسال الرسالة الجديدة وإزالة رسالة المعالجة القديمة
-    bot.delete_message(msg.chat.id, processing_msg.message_id)
-    bot.send_message(msg.chat.id, caption, reply_markup=markup, parse_mode="Markdown")
+    title = info.get("title", "بدون عنوان")
+    duration = info.get("duration", 0)
+    uploader = info.get("uploader", "غير معروف")
+    site = info.get("extractor", "منصة غير معروفة")
+
+    caption = (
+        f"🎬 **العنوان:** {title}\n"
+        f"📺 **المنصة:** {site}\n"
+        f"👤 **الناشر:** {uploader}\n"
+        f"⏱️ **المدة:** {int(duration // 60)}:{int(duration % 60):02d}\n\n"
+        f"👇 اختر نوع التحميل:"
+    )
+
+    markup = InlineKeyboardMarkup()
+    unique = str(hash(url) % 1000000)
+    markup.add(
+        InlineKeyboardButton("📹 تحميل فيديو", callback_data=f"video|{unique}|{url}"),
+        InlineKeyboardButton("🎵 تحميل صوت", callback_data=f"audio|{unique}|{url}")
+    )
+
+    bot.edit_message_text(caption, msg.chat.id, wait_msg.message_id, reply_markup=markup, parse_mode="Markdown")
 
 # ===========================
-# 🎯 التعامل مع الضغط على الأزرار
+# 🎯 التعامل مع الأزرار
 # ===========================
-
 @bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    # تنسيق call.data: action|file_id_segment|url
+def button_handler(call):
     try:
-        action, file_id_segment, url = call.data.split("|", 2)
-    except ValueError:
-        bot.answer_callback_query(call.id, "❌ خطأ في بيانات الزر.", show_alert=True)
-        return
+        action, uid, url = call.data.split("|", 2)
+    except:
+        return bot.answer_callback_query(call.id, "⚠️ حدث خطأ في البيانات")
 
-    # إزالة الأزرار وعرض حالة التحميل
-    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    
-    # إرسال رسالة "جاري التحميل" الجديدة 
-    download_msg = bot.send_message(call.message.chat.id, "⏳ **بدء عملية التحميل...** قد تستغرق العملية بعض الوقت حسب حجم الملف. ⚙️", parse_mode="Markdown")
+    bot.answer_callback_query(call.id, "✅ جاري التحميل...")
+    status = bot.send_message(call.message.chat.id, "⏳ **يتم التحميل الآن...**", parse_mode="Markdown")
 
-    file_name = f"download_{call.message.chat.id}_{file_id_segment}_{action}_{int(time.time())}"
-    
-    # تنفيذ عملية التحميل
-    file_path = download_media(url, format_type=action, file_name=file_name)
+    file_name = f"{call.message.chat.id}_{uid}"
+    file_path = download_media(url, action, file_name)
 
-    # حذف رسالة "جاري التحميل"
-    try:
-        bot.delete_message(call.message.chat.id, download_msg.message_id)
-    except Exception:
-        pass # قد يكون تم حذفها بالفعل أو حدث خطأ في الحذف
+    bot.delete_message(call.message.chat.id, status.message_id)
 
     if not file_path:
-        bot.send_message(call.message.chat.id, "❌ **فشل التحميل!** \nتعذر تحميل الوسائط. يرجى التأكد من أن الرابط عام وغير محمي.", parse_mode="Markdown")
-        return
+        return bot.send_message(call.message.chat.id, "❌ **فشل التحميل.** الرابط ربما خاص أو غير مدعوم.")
 
-    # إرسال الملف
     try:
-        with open(file_path, "rb") as media_file:
-            caption_text = f"✅ **تم التحميل بنجاح!** ✨\n\nنوع الملف: {'فيديو 📹' if action == 'video' else 'صوت 🎵'}"
-            
-            if action == "video":
-                # إرسال فيديو
-                bot.send_video(call.message.chat.id, media_file, caption=caption_text, parse_mode="Markdown", supports_streaming=True)
-            elif action == "audio":
-                # إرسال صوت
-                bot.send_audio(call.message.chat.id, media_file, caption=caption_text, parse_mode="Markdown")
+        with open(file_path, "rb") as f:
+            if action == "audio":
+                bot.send_audio(call.message.chat.id, f, caption="🎵 تم التحميل بنجاح!", parse_mode="Markdown")
             else:
-                 # إرسال مستند في حال عدم التحديد
-                 bot.send_document(call.message.chat.id, media_file, caption=caption_text, parse_mode="Markdown")
-
+                bot.send_video(call.message.chat.id, f, caption="📹 تم التحميل بنجاح!", parse_mode="Markdown", supports_streaming=True)
     except Exception as e:
-        print(f"❌ خطأ في إرسال الملف: {e}")
-        bot.send_message(call.message.chat.id, f"❌ **فشل إرسال الملف:** \nقد يكون حجم الملف كبيراً جداً ({e}).", parse_mode="Markdown")
-    
+        bot.send_message(call.message.chat.id, f"❌ **خطأ أثناء الإرسال:** {e}")
     finally:
-        # تنظيف الملفات المؤقتة
         if os.path.exists(file_path):
             os.remove(file_path)
-            
-        # إشعار للمستخدم بأن العملية انتهت
-        bot.answer_callback_query(call.id, text="تمت العملية بنجاح!")
-
 
 # ===========================
-# 🟢 تشغيل البوت باستخدام Thread
+# 🌐 Flask endpoint
 # ===========================
-
-def run_bot():
-    print("🤖 Super Downloader Bot is running...")
-    # إزالة الأخطاء التي تظهر عند إعادة التشغيل
-    try:
-        bot.delete_webhook()
-    except Exception as e:
-        print(f"Failed to delete webhook: {e}")
-    
-    bot.infinity_polling(skip_pending=True)
-
-# ===========================
-# 🌐 إضافة endpoint لاستقبال Ping
-# ===========================
-
 @app.route('/')
 def home():
-    return "✅ السيرفر يعمل! Super Downloader Bot جاهز للـ Ping."
+    return "✅ البوت يعمل بنجاح!"
 
 # ===========================
-# 🏁 تشغيل Flask + البوت
+# 🏁 تشغيل السيرفر والبوت
 # ===========================
+def run_bot():
+    try:
+        bot.delete_webhook()
+    except:
+        pass
+    bot.infinity_polling(skip_pending=True)
 
 if __name__ == "__main__":
     from waitress import serve
-    import threading
-
-    # تشغيل البوت في Thread منفصل
-    t = threading.Thread(target=run_bot)
-    t.start()
-
-    # تشغيل Flask عبر Waitress على جميع العناوين
+    Thread(target=run_bot).start()
     port = int(os.environ.get("PORT", 5000))
-    print(f"🌐 السيرفر يعمل على المنفذ {port}")
+    print(f"🌐 Server running on port {port}")
     serve(app, host="0.0.0.0", port=port)
